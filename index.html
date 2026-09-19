@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calorie Tracker</title>
+  <link rel="manifest" href="manifest.json">
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f7f5;
+      margin: 0;
+      padding: 24px;
+      color: #1f2933;
+    }
+
+    main {
+      max-width: 500px;
+      margin: auto;
+    }
+
+    h1 {
+      color: #1b7f4b;
+    }
+
+    .card {
+      background: white;
+      padding: 20px;
+      margin-bottom: 16px;
+      border-radius: 12px;
+    }
+
+    input, button {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 12px;
+      margin-top: 10px;
+      font-size: 16px;
+    }
+
+    button {
+      background: #1b7f4b;
+      color: white;
+      border: 0;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    #foodList {
+      list-style: none;
+      padding: 0;
+    }
+
+    #foodList li {
+      border-top: 1px solid #e5e7eb;
+      padding: 12px 0;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .remove-button {
+      background: #b42318;
+      width: auto;
+      margin: 0;
+      padding: 8px 12px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>My Calorie Tracker</h1>
+    <p>Add what you have eaten today.</p>
+
+    <section class="card">
+      <h2>Add food</h2>
+
+      <form id="foodForm">
+        <input id="foodName" type="text" placeholder="Food name, e.g. chicken breast" required>
+        <input id="calories" type="number" placeholder="Calories" min="0" required>
+        <input id="protein" type="number" placeholder="Protein (g)" min="0" step="0.1" required>
+        <input id="carbs" type="number" placeholder="Carbs (g)" min="0" step="0.1" required>
+        <input id="fat" type="number" placeholder="Fat (g)" min="0" step="0.1" required>
+
+        <button type="submit">Add food</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Today's totals</h2>
+      <p>Calories: <strong id="totalCalories">0</strong></p>
+      <p>Protein: <strong id="totalProtein">0g</strong></p>
+      <p>Carbs: <strong id="totalCarbs">0g</strong></p>
+      <p>Fat: <strong id="totalFat">0g</strong></p>
+    </section>
+
+    <section class="card">
+      <h2>Food diary</h2>
+      <ul id="foodList"></ul>
+    </section>
+  </main>
+
+  <script>
+    const form = document.getElementById("foodForm");
+    const foodList = document.getElementById("foodList");
+
+    const savedFoods = localStorage.getItem("foodDiary");
+    const foods = savedFoods ? JSON.parse(savedFoods) : [];
+
+    function saveFoods() {
+      localStorage.setItem("foodDiary", JSON.stringify(foods));
+    }
+
+    function updateScreen() {
+      foodList.innerHTML = "";
+
+      let totalCalories = 0;
+      let totalProtein = 0;
+      let totalCarbs = 0;
+      let totalFat = 0;
+
+      foods.forEach(function (food, index) {
+        const foodItem = document.createElement("li");
+        const foodDetails = document.createElement("span");
+        const removeButton = document.createElement("button");
+
+        foodDetails.textContent =
+          food.name + " — " + food.calories + " kcal | " +
+          food.protein + "g protein | " +
+          food.carbs + "g carbs | " +
+          food.fat + "g fat";
+
+        removeButton.textContent = "Remove";
+        removeButton.className = "remove-button";
+        removeButton.type = "button";
+
+        removeButton.addEventListener("click", function () {
+          foods.splice(index, 1);
+          saveFoods();
+          updateScreen();
+        });
+
+        foodItem.appendChild(foodDetails);
+        foodItem.appendChild(removeButton);
+        foodList.appendChild(foodItem);
+
+        totalCalories += food.calories;
+        totalProtein += food.protein;
+        totalCarbs += food.carbs;
+        totalFat += food.fat;
+      });
+
+      document.getElementById("totalCalories").textContent = totalCalories;
+      document.getElementById("totalProtein").textContent = totalProtein + "g";
+      document.getElementById("totalCarbs").textContent = totalCarbs + "g";
+      document.getElementById("totalFat").textContent = totalFat + "g";
+    }
+
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+
+      const food = {
+        name: document.getElementById("foodName").value,
+        calories: Number(document.getElementById("calories").value),
+        protein: Number(document.getElementById("protein").value),
+        carbs: Number(document.getElementById("carbs").value),
+        fat: Number(document.getElementById("fat").value)
+      };
+
+      foods.push(food);
+      saveFoods();
+      updateScreen();
+      form.reset();
+    });
+
+    updateScreen();
+    if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("./service-worker.js");
+  });
+}
+  </script>
+</body>
+</html>
