@@ -31,6 +31,12 @@
       border-radius: 12px;
     }
 
+    label {
+      display: block;
+      margin-top: 12px;
+      font-weight: 600;
+    }
+
     input, button {
       box-sizing: border-box;
       width: 100%;
@@ -45,6 +51,11 @@
       border: 0;
       border-radius: 8px;
       cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: wait;
+      opacity: 0.65;
     }
 
     #foodList {
@@ -68,6 +79,36 @@
       padding: 8px 12px;
       font-size: 14px;
     }
+
+    #barcodeReview {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #e5e7eb;
+    }
+
+    #scannerPanel {
+  margin: 16px 0;
+}
+
+#barcodeVideo {
+  width: 100%;
+  margin-top: 10px;
+  border-radius: 8px;
+  background: #111827;
+}
+
+#cancelScanButton {
+  background: #52606d;
+}
+
+#lookupStatus {
+      min-height: 1.25em;
+    }
+
+    .small-note {
+      font-size: 14px;
+      color: #52606d;
+    }
   </style>
 </head>
 
@@ -75,6 +116,58 @@
   <main>
     <h1>My Calorie Tracker</h1>
     <p>Add what you have eaten today.</p>
+
+    <section class="card">
+      <h2>Look up a barcode</h2>
+      <p>Enter a food barcode now. Camera scanning comes next.</p>
+      <p class="small-note">
+        Looking up a barcode sends only its number to Open Food Facts.
+        Your diary and camera images are not shared.
+      </p>
+
+      <button id="scanBarcodeButton" type="button">
+  Scan barcode with camera
+</button>
+<p class="small-note">
+  The camera will only open after you press this button.
+</p>
+
+<div id="scannerPanel" hidden>
+  <p id="scannerStatus" role="status" aria-live="polite"></p>
+  <video id="barcodeVideo" playsinline muted></video>
+  <button id="cancelScanButton" type="button">Cancel camera</button>
+</div>
+
+<label for="barcodeInput">Barcode number</label>
+4.
+      <input
+        id="barcodeInput"
+        type="text"
+        inputmode="numeric"
+        autocomplete="off"
+        placeholder="e.g. 5000159461124"
+      >
+
+      <button id="lookupBarcodeButton" type="button">Look up product</button>
+      <p id="lookupStatus" role="status" aria-live="polite"></p>
+
+      <div id="barcodeReview" hidden>
+        <p id="barcodeReviewText"></p>
+
+        <label for="barcodeAmount">Amount eaten (g or ml)</label>
+        <input
+          id="barcodeAmount"
+          type="number"
+          min="0"
+          step="1"
+          placeholder="e.g. 100"
+        >
+
+        <button id="useBarcodeProductButton" type="button">
+          Fill in nutrition for this amount
+        </button>
+      </div>
+    </section>
 
     <section class="card">
       <h2>Add food</h2>
@@ -104,12 +197,31 @@
     </section>
   </main>
 
-  <script>
+  <script src="vendor/zxing-browser.min.js"></script>
+<script>
     const form = document.getElementById("foodForm");
     const foodList = document.getElementById("foodList");
+    const barcodeInput = document.getElementById("barcodeInput");
+    const lookupBarcodeButton = document.getElementById("lookupBarcodeButton");
+    const lookupStatus = document.getElementById("lookupStatus");
+    const barcodeReview = document.getElementById("barcodeReview");
+    const barcodeReviewText = document.getElementById("barcodeReviewText");
+    const barcodeAmount = document.getElementById("barcodeAmount");
+    const useBarcodeProductButton = document.getElementById("useBarcodeProductButton");
+const scanBarcodeButton = document.getElementById("scanBarcodeButton");
+const scannerPanel = document.getElementById("scannerPanel");
+const scannerStatus = document.getElementById("scannerStatus");
+const barcodeVideo = document.getElementById("barcodeVideo");
+const cancelScanButton = document.getElementById("cancelScanButton");
 
     const savedFoods = localStorage.getItem("foodDiary");
     const foods = savedFoods ? JSON.parse(savedFoods) : [];
+
+    let pendingBarcodeProduct = null;
+let scannerControls = null;
+let scannerSession = 0;
+let scannerStarting = false;
+let scannerTimeoutId = null;
 
     function saveFoods() {
       localStorage.setItem("foodDiary", JSON.stringify(foods));
@@ -160,7 +272,160 @@
       document.getElementById("totalFat").textContent = totalFat + "g";
     }
 
-    form.addEventListener("submit", function (event) {
+    function setLookupStatus(message) {
+      lookupStatus.textContent = message;
+    }
+
+    function clearBarcodeReview() {
+      pendingBarcodeProduct = null;
+      barcodeAmount.value = "";
+      barcodeReviewText.textContent = "";
+      barcodeReview.hidden = true;
+    }
+
+    function stopScanner() {
+  scannerSession += 1;
+  scannerStarting = false;
+
+  if (scannerControls) {
+    scannerControls.stop();
+    scannerControls = null;
+  }
+
+  barcodeVideo.srcObject = null;
+  scannerPanel.hidden = true;
+}
+
+async function startScanner() {
+  if (scannerStarting || scannerControls) {
+    return;
+  }
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setLookupStatus("This browser cannot open a camera. You can enter the barcode manually.");
+    return;
+  }
+
+  scannerStarting = true;
+  const session = scannerSession + 1;
+  scannerSession = session;
+  scannerPanel.hidden = false;
+  scannerStatus.textContent = "Opening your rear camera...";
+
+  try {
+    const codeReader = new ZXingBrowser.BrowserMultiFormatOneDReader();
+
+    const controls = await codeReader.decodeFromConstraints(
+      {
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" }
+        }
+      },
+      barcodeVideo,
+      function (result, error, callbackControls) {
+        if (!result || session !== scannerSession) {
+          return;
+        }
+
+        const barcode = result.getText().trim();
+
+        scannerSession += 1;
+        scannerStarting = false;
+        callbackControls.stop();
+        scannerControls = null;
+        barcodeVideo.srcObject = null;
+        scannerPanel.hidden = true;
+
+        if (!/^\d{8,14}$/.test(barcode)) {
+          setLookupStatus("That code is not a supported food barcode. You can enter it manually.");
+          return;
+        }
+
+        barcodeInput.value = barcode;
+        setLookupStatus("Barcode scanned. Looking up product...");
+        lookupBarcodeButton.click();
+      }
+    );
+
+    if (session !== scannerSession) {
+      controls.stop();
+      return;
+    }
+
+    scannerControls = controls;
+    scannerStarting = false;
+    scannerStatus.textContent = "Point the camera at a food barcode.";
+  } catch (error) {
+    if (session !== scannerSession) {
+      return;
+    }
+
+    scannerStarting = false;
+    scannerPanel.hidden = true;
+    barcodeVideo.srcObject = null;
+
+    if (error.name === "NotAllowedError") {
+      setLookupStatus("Camera access was not allowed. You can enter the barcode manually.");
+    } else if (error.name === "NotFoundError") {
+      setLookupStatus("No camera was found. You can enter the barcode manually.");
+    } else {
+      setLookupStatus("The camera could not start. You can enter the barcode manually.");
+    }
+  }
+}
+
+function validNutritionValue(nutrients, key) {
+      if (
+        nutrients[key] === null ||
+        nutrients[key] === undefined ||
+        nutrients[key] === ""
+      ) {
+        return null;
+      }
+
+      const value = Number(nutrients[key]);
+      return Number.isFinite(value) && value >= 0 ? value : null;
+    }
+
+    function hasCompletePerHundredNutrition(nutrients) {
+  return [
+    "energy-kcal_100g",
+    "proteins_100g",
+    "carbohydrates_100g",
+    "fat_100g"
+  ].every(function (key) {
+    return validNutritionValue(nutrients, key) !== null;
+  });
+}
+
+function roundedValue(value) {
+      return Math.round(value * 10) / 10;
+    }
+
+    scanBarcodeButton.addEventListener("click", function () {
+  if (typeof ZXingBrowser === "undefined") {
+    setLookupStatus("Scanner helper was not found. Check the vendor file name.");
+    return;
+  }
+
+  startScanner();
+});
+
+cancelScanButton.addEventListener("click", function () {
+  stopScanner();
+  setLookupStatus("Camera scanner cancelled.");
+});
+
+window.addEventListener("pagehide", stopScanner);
+
+document.addEventListener("visibilitychange", function () {
+  if (document.hidden) {
+    stopScanner();
+  }
+});
+
+form.addEventListener("submit", function (event) {
       event.preventDefault();
 
       const food = {
@@ -177,12 +442,182 @@
       form.reset();
     });
 
+    lookupBarcodeButton.addEventListener("click", async function () {
+      const barcode = barcodeInput.value.trim();
+      clearBarcodeReview();
+
+      if (!/^\d{8,14}$/.test(barcode)) {
+        setLookupStatus("Enter a barcode containing 8 to 14 digits.");
+        return;
+      }
+
+      lookupBarcodeButton.disabled = true;
+      setLookupStatus("Looking up product…");
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(function () {
+        controller.abort();
+      }, 10000);
+
+      try {
+        const endpoint =
+          "https://world.openfoodfacts.org/api/v3/product/" +
+          encodeURIComponent(barcode) +
+          "?fields=code,product_name,generic_name,brands,serving_size,serving_quantity,serving_quantity_unit,nutrition_data_per,nutriments";
+
+        const response = await fetch(endpoint, {
+          method: "GET",
+          credentials: "omit",
+          referrerPolicy: "no-referrer",
+          signal: controller.signal
+        });
+
+        if (response.status === 404) {
+          setLookupStatus("Product not found. You can still add it manually.");
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error("Lookup unavailable");
+        }
+
+        const result = await response.json();
+
+        if (!result.product) {
+          setLookupStatus("Product not found. You can still add it manually.");
+          return;
+        }
+
+        const product = result.product;
+        const nutrients = product.nutriments || {};
+        const productName =
+          product.product_name ||
+          product.generic_name ||
+          product.brands ||
+          "Unnamed product";
+
+        const servingValues = {
+          calories: validNutritionValue(nutrients, "energy-kcal_serving"),
+          protein: validNutritionValue(nutrients, "proteins_serving"),
+          carbs: validNutritionValue(nutrients, "carbohydrates_serving"),
+          fat: validNutritionValue(nutrients, "fat_serving")
+        };
+
+        const hasCompleteServing = Object.values(servingValues).every(function (value) {
+          return value !== null;
+        });
+
+        if (hasCompleteServing && !hasCompletePerHundredNutrition(nutrients)) {
+          document.getElementById("foodName").value = productName;
+          document.getElementById("calories").value = servingValues.calories;
+          document.getElementById("protein").value = servingValues.protein;
+          document.getElementById("carbs").value = servingValues.carbs;
+          document.getElementById("fat").value = servingValues.fat;
+
+          setLookupStatus(
+            productName +
+            " found. Values were filled for " +
+            (product.serving_size || "one serving") +
+            ". Check them, then press Add food."
+          );
+          return;
+        }
+
+        const perHundredValues = {
+          calories: validNutritionValue(nutrients, "energy-kcal_100g"),
+          protein: validNutritionValue(nutrients, "proteins_100g"),
+          carbs: validNutritionValue(nutrients, "carbohydrates_100g"),
+          fat: validNutritionValue(nutrients, "fat_100g")
+        };
+
+        const hasCompletePerHundred = Object.values(perHundredValues).every(function (value) {
+          return value !== null;
+        });
+
+        if (!hasCompletePerHundred) {
+          setLookupStatus(
+            productName +
+            " found, but its nutrition information is incomplete. You can still add it manually."
+          );
+          return;
+        }
+
+        const amountUnit = product.nutrition_data_per === "100ml" ? "ml" : "g";
+
+        pendingBarcodeProduct = {
+          name: productName,
+          unit: amountUnit,
+          calories: perHundredValues.calories,
+          protein: perHundredValues.protein,
+          carbs: perHundredValues.carbs,
+          fat: perHundredValues.fat
+        };
+
+        barcodeReviewText.textContent =
+          productName +
+          " was found. Nutrition is listed per 100 " +
+          amountUnit +
+          ". Enter how much you ate.";
+
+        barcodeAmount.placeholder = amountUnit === "ml" ? "e.g. 250" : "e.g. 100";
+        barcodeReview.hidden = false;
+        setLookupStatus("Product found. Enter the amount below.");
+      } catch (error) {
+        if (error.name === "AbortError") {
+          setLookupStatus("Lookup timed out. Check your connection and try again.");
+        } else {
+          setLookupStatus("Lookup is unavailable right now. You can still add food manually.");
+        }
+      } finally {
+        clearTimeout(timeoutId);
+        lookupBarcodeButton.disabled = false;
+      }
+    });
+
+    useBarcodeProductButton.addEventListener("click", function () {
+      if (!pendingBarcodeProduct) {
+        setLookupStatus("Look up a product first.");
+        return;
+      }
+
+      const amount = Number(barcodeAmount.value);
+
+      if (!Number.isFinite(amount) || amount <= 0) {
+        setLookupStatus("Enter an amount greater than zero.");
+        return;
+      }
+
+      const multiplier = amount / 100;
+
+      document.getElementById("foodName").value = pendingBarcodeProduct.name;
+      document.getElementById("calories").value =
+        roundedValue(pendingBarcodeProduct.calories * multiplier);
+      document.getElementById("protein").value =
+        roundedValue(pendingBarcodeProduct.protein * multiplier);
+      document.getElementById("carbs").value =
+        roundedValue(pendingBarcodeProduct.carbs * multiplier);
+      document.getElementById("fat").value =
+        roundedValue(pendingBarcodeProduct.fat * multiplier);
+
+      setLookupStatus(
+        "Values filled for " +
+        amount +
+        " " +
+        pendingBarcodeProduct.unit +
+        ". Check them, then press Add food."
+      );
+
+      barcodeReview.hidden = true;
+      pendingBarcodeProduct = null;
+    });
+
     updateScreen();
+
     if ("serviceWorker" in navigator) {
-  window.addEventListener("load", function () {
-    navigator.serviceWorker.register("./service-worker.js");
-  });
-}
+      window.addEventListener("load", function () {
+        navigator.serviceWorker.register("./service-worker.js");
+      });
+    }
   </script>
 </body>
 </html>
