@@ -1,9 +1,10 @@
-const CACHE_NAME = "calorie-tracker-v2";
+const CACHE_NAME = "calorie-tracker-v4";
 
 const APP_FILES = [
   "./",
   "./index.html",
-  "./manifest.json"
+  "./manifest.json",
+  "./vendor/zxing-browser.min.js"
 ];
 
 self.addEventListener("install", function (event) {
